@@ -1,13 +1,6 @@
 #include <WiFi.h>
 #include <PubSubClient.h>
-
-// WiFi credentials
-const char* ssid = "OnePlus Nord CE 2 Lite 5G";
-const char* password = "1111111111";
-
-// MQTT Broker settings
-const char* mqtt_server = "10.16.104.1";  // Your PC's local IP running Mosquitto
-const int mqtt_port = 1883;
+#include "config.h"
 
 // Create WiFi & MQTT client objects
 WiFiClient espClient;
@@ -15,20 +8,22 @@ PubSubClient client(espClient);
 
 // Callback: handles incoming subscribed messages
 void callback(char* topic, byte* payload, unsigned int length) {
-  Serial.print("Message arrived [");
-  Serial.print(topic);
-  Serial.print("] ");
+  DEBUG_PRINT("Message arrived [");
+  DEBUG_PRINT(topic);
+  DEBUG_PRINT("] ");
   for (unsigned int i = 0; i < length; i++) {
-    Serial.print((char)payload[i]);
+    DEBUG_PRINT((char)payload[i]);
   }
-  Serial.println();
+  DEBUG_PRINTLN();
 
-  // Example: turn on/off onboard LED if topic is "esp32/control/led"
-  if (String(topic) == "esp32/control/led") {
+  // Example: turn on/off onboard LED if topic is LED control
+  if (String(topic) == TOPIC_LED_CONTROL) {
     if ((char)payload[0] == '1') {
-      digitalWrite(LED_BUILTIN, HIGH);
+      digitalWrite(LED_PIN, HIGH);
+      DEBUG_PRINTLN("LED turned ON");
     } else {
-      digitalWrite(LED_BUILTIN, LOW);
+      digitalWrite(LED_PIN, LOW);
+      DEBUG_PRINTLN("LED turned OFF");
     }
   }
 }
@@ -36,41 +31,62 @@ void callback(char* topic, byte* payload, unsigned int length) {
 // Connect to WiFi
 void setup_wifi() {
   delay(10);
-  Serial.println();
-  Serial.print("Connecting to ");
-  Serial.println(ssid);
+  DEBUG_PRINTLN();
+  DEBUG_PRINT("Connecting to ");
+  DEBUG_PRINTLN(WIFI_SSID);
 
-  WiFi.begin(ssid, password);
-  while (WiFi.status() != WL_CONNECTED) {
+  WiFi.begin(WIFI_SSID, WIFI_PASSWORD);
+  
+  unsigned long startTime = millis();
+  while (WiFi.status() != WL_CONNECTED && millis() - startTime < WIFI_TIMEOUT) {
     delay(500);
-    Serial.print(".");
+    DEBUG_PRINT(".");
   }
-  Serial.println("");
-  Serial.println("WiFi connected");
-  Serial.println(WiFi.localIP());
+  
+  if (WiFi.status() == WL_CONNECTED) {
+    DEBUG_PRINTLN("");
+    DEBUG_PRINTLN("WiFi connected");
+    DEBUG_PRINT("IP address: ");
+    DEBUG_PRINTLN(WiFi.localIP());
+  } else {
+    DEBUG_PRINTLN("");
+    DEBUG_PRINTLN("WiFi connection failed!");
+  }
 }
 
 // Reconnect to MQTT if disconnected
 void reconnect() {
   while (!client.connected()) {
-    Serial.print("Attempting MQTT connection...");
-    if (client.connect("ESP32Client")) {
-      Serial.println("connected");
-      client.subscribe("esp32/control/led");
+    DEBUG_PRINT("Attempting MQTT connection...");
+    if (client.connect(MQTT_CLIENT_ID)) {
+      DEBUG_PRINTLN("connected");
+      
+      // Subscribe to control topics
+      client.subscribe(TOPIC_LED_CONTROL);
+      DEBUG_PRINT("Subscribed to: ");
+      DEBUG_PRINTLN(TOPIC_LED_CONTROL);
+      
+      // Send online status
+      client.publish(TOPIC_STATUS, "{\"online\":true}");
     } else {
-      Serial.print("failed, rc=");
-      Serial.print(client.state());
-      Serial.println(" try again in 5 seconds");
-      delay(5000);
+      DEBUG_PRINT("failed, rc=");
+      DEBUG_PRINT(client.state());
+      DEBUG_PRINTLN(" try again in 5 seconds");
+      delay(MQTT_RECONNECT_DELAY);
     }
   }
 }
 
 void setup() {
-  pinMode(LED_BUILTIN, OUTPUT);
-  Serial.begin(115200);
+  pinMode(LED_PIN, OUTPUT);
+  Serial.begin(SERIAL_BAUD_RATE);
+  
+  DEBUG_PRINTLN("=== ESP32 IoT Device Starting ===");
+  DEBUG_PRINT("Device ID: ");
+  DEBUG_PRINTLN(DEVICE_ID);
+  
   setup_wifi();
-  client.setServer(mqtt_server, mqtt_port);
+  client.setServer(MQTT_SERVER, MQTT_PORT);
   client.setCallback(callback);
 }
 
@@ -80,12 +96,32 @@ void loop() {
   }
   client.loop();
 
-  // Publish test message every 5 seconds
-  static unsigned long lastMsg = 0;
-  if (millis() - lastMsg > 5000) {
-    lastMsg = millis();
-    String msg = "Hello from ESP32";
-    client.publish("esp32/sensors/test", msg.c_str());
-    Serial.println("Published: " + msg);
+  // Publish telemetry data at defined interval
+  static unsigned long lastTelemetry = 0;
+  if (millis() - lastTelemetry > TELEMETRY_INTERVAL) {
+    lastTelemetry = millis();
+    
+    // Create JSON telemetry message
+    String telemetryMsg = "{";
+    telemetryMsg += "\"device_id\":\"" + String(DEVICE_ID) + "\",";
+    telemetryMsg += "\"timestamp\":" + String(millis()) + ",";
+    telemetryMsg += "\"uptime\":" + String(millis() / 1000) + ",";
+    telemetryMsg += "\"free_heap\":" + String(ESP.getFreeHeap()) + ",";
+    telemetryMsg += "\"wifi_rssi\":" + String(WiFi.RSSI());
+    telemetryMsg += "}";
+    
+    client.publish(TOPIC_TELEMETRY, telemetryMsg.c_str());
+    DEBUG_PRINT("Published telemetry: ");
+    DEBUG_PRINTLN(telemetryMsg);
+  }
+
+  // Publish test message (backward compatibility)
+  static unsigned long lastTest = 0;
+  if (millis() - lastTest > 10000) {  // Every 10 seconds
+    lastTest = millis();
+    String msg = "Hello from " + String(DEVICE_ID);
+    client.publish(TOPIC_SENSOR_DATA, msg.c_str());
+    DEBUG_PRINT("Published test: ");
+    DEBUG_PRINTLN(msg);
   }
 }

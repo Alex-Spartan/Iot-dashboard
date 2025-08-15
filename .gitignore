@@ -74,4 +74,4 @@ logs/
 
 # MQTT credentials (if stored in files)
 mqtt_credentials.json
-device_secrets.h
+firmware/esp32/config.h
